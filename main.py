@@ -1,6 +1,7 @@
 import asyncio
 import json
 import math
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -11,6 +12,8 @@ from audio_capture import capture
 
 app = FastAPI(title="Audio Equalizer")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+SETTINGS_FILE = Path("equalizer_settings.json")
 
 
 def build_band_centers_hz(
@@ -46,6 +49,31 @@ def normalize_band_gains(raw, bands: int) -> list[float]:
     return out
 
 
+def save_equalizer_styles_to_file(styles: dict) -> None:
+    try:
+        SETTINGS_FILE.write_text(
+            json.dumps(styles, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def load_equalizer_styles_from_file(default_styles: dict, bands: int, sample_rate: int) -> dict:
+    if not SETTINGS_FILE.exists():
+        return default_styles
+    try:
+        raw = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        loaded = raw if isinstance(raw, dict) else {}
+        merged = {**default_styles, **loaded}
+        merged["bandGains"] = normalize_band_gains(merged.get("bandGains"), bands)
+        if not isinstance(merged.get("bandCentersHz"), list) or len(merged["bandCentersHz"]) != bands:
+            merged["bandCentersHz"] = build_band_centers_hz(bands, sample_rate)
+        return merged
+    except Exception:
+        return default_styles
+
+
 class State:
     bands = int(getattr(capture, "BANDS", 64))
     sample_rate = int(getattr(capture, "SAMPLE_RATE", 48000))
@@ -66,6 +94,7 @@ class State:
 
 
 state = State()
+state.eq_styles = load_equalizer_styles_from_file(state.eq_styles, state.bands, state.sample_rate)
 
 
 @app.get("/")
@@ -96,6 +125,7 @@ async def set_equalizer_styles(payload: dict):
         if not isinstance(merged.get("bandCentersHz"), list) or len(merged["bandCentersHz"]) != state.bands:
             merged["bandCentersHz"] = build_band_centers_hz(state.bands, state.sample_rate)
         state.eq_styles = merged
+        save_equalizer_styles_to_file(state.eq_styles)
     return {"status": "ok", "settings": state.eq_styles}
 
 
