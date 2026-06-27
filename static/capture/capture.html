@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Захват звука</title>
+    <link rel="stylesheet" href="/static/capture/capture.css">
+</head>
+<body>
+<div class="card">
+    <h1>🎙 Захват звука</h1>
+
+    <h3>Источник звука</h3>
+    <div class="radio-group">
+        <label>
+            <input type="radio" name="source" value="system" checked onchange="toggleSource()"> 🔊 Весь компьютер
+        </label>
+        <label>
+            <input type="radio" name="source" value="browser" onchange="toggleSource()"> 🪟 Окно / вкладка приложения
+        </label>
+    </div>
+
+    <div id="systemBlock">
+        <select id="devices"></select>
+        <p class="hint">Сервер захватит весь системный звук.</p>
+    </div>
+
+    <div id="browserBlock" class="hidden">
+        <p class="hint">
+            Выберите окно/вкладку и <b>включите галочку «Поделиться аудио»</b>.
+            Не закрывайте эту вкладку — она передаёт звук эквалайзеру.
+        </p>
+    </div>
+
+    <button id="startBtn" onclick="start()">▶ Начать захват</button>
+    <button class="secondary" onclick="stop()">⏹ Остановить</button>
+
+    <div class="status" id="status">Готов к работе</div>
+
+    <h3>🎚 Чувствительность</h3>
+    <div class="color-row">
+        <span>Чувствительность звука</span>
+        <input type="range" id="sensitivity" min="10" max="400" value="100">
+    </div>
+    <p class="hint">
+        Меньше — если эквалайзер зашкаливает. Больше — если столбики низкие.
+        <b><span id="sensVal">100</span>%</b>
+    </p>
+
+    <h3>🎨 Настройки эквалайзера</h3>
+    <div class="color-row"><span>Цвет столбиков (верх)</span>
+        <input type="color" id="colorTop" value="#e94560"></div>
+    <div class="color-row"><span>Цвет столбиков (низ)</span>
+        <input type="color" id="colorBottom" value="#533483"></div>
+    <div class="checkbox-row"><input type="checkbox" id="rainbow">
+        <label for="rainbow">🌈 Радужный режим</label></div>
+    <div class="color-row"><span>Цвет фона</span>
+        <input type="color" id="bgColor" value="#0a0a14"></div>
+    <div class="checkbox-row"><input type="checkbox" id="transparent">
+        <label for="transparent">Прозрачный фон</label></div>
+    <div class="color-row"><span>Прозрачность фона</span>
+        <input type="range" id="bgAlpha" min="0" max="100" value="100"></div>
+    <button onclick="saveSettings()">💾 Применить настройки</button>
+
+    <a class="link" href="/equalizer" target="_blank">📊 Открыть эквалайзер →</a>
+</div>
+
+<script src="/static/capture/capture.js" defer></script>
+</body>
+</html>

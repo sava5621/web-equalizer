@@ -16,7 +16,7 @@ class AudioCapture:
     """Захват системного звука (loopback) с устройства вывода."""
 
     SAMPLE_RATE = 48000
-    BLOCK_SIZE = 2048  # увеличен для стабильности (меньше discontinuity)
+    BLOCK_SIZE = 2048  # увеличен для лучшего разрешения по низким частотам
     BANDS = 64
 
     def __init__(self):
@@ -92,21 +92,43 @@ class AudioCapture:
 
     def _compute_spectrum(self, samples: np.ndarray):
         n = len(samples)
+        if n == 0:
+            return [0.0] * self.BANDS
+
         windowed = samples * np.hanning(n)
         fft = np.abs(np.fft.rfft(windowed))
         freqs = np.fft.rfftfreq(n, 1.0 / self.SAMPLE_RATE)
 
-        min_f, max_f = 20, 20000
+        min_f = 20.0
+        max_f = min(20000.0, self.SAMPLE_RATE / 2 - 1.0)
+
+        # Логарифмические границы и центры полос (геометрический центр)
         edges = np.logspace(np.log10(min_f), np.log10(max_f), self.BANDS + 1)
+        centers = np.sqrt(edges[:-1] * edges[1:])
 
-        result = np.zeros(self.BANDS)
-        for i in range(self.BANDS):
-            mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
-            if np.any(mask):
-                result[i] = fft[mask].mean()
+        # Исключаем DC-компонент (0 Гц), чтобы не тянуть график в нули/перекос
+        valid = freqs > 0
+        if not np.any(valid):
+            return [0.0] * self.BANDS
 
-        result = 20 * np.log10(result + 1e-6)
-        result = np.clip((result + 60) / 60, 0, 1)
+        # Переход в dB
+        fft_db = 20 * np.log10(fft[valid] + 1e-9)
+
+        # Интерполяция на центры полос — устраняет "дырки" с нулевыми колонками
+        band_db = np.interp(
+            centers,
+            freqs[valid],
+            fft_db,
+            left=fft_db[0],
+            right=fft_db[-1],
+        )
+
+        # Лёгкое сглаживание по соседним полосам
+        kernel = np.array([0.2, 0.6, 0.2])
+        band_db = np.convolve(band_db, kernel, mode="same")
+
+        # Нормализация в диапазон [0..1]
+        result = np.clip((band_db + 60.0) / 60.0, 0.0, 1.0)
         return result.tolist()
 
     def get_spectrum(self, timeout: float = 0.1):

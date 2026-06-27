@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -12,8 +13,44 @@ app = FastAPI(title="Audio Equalizer")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+def build_band_centers_hz(
+    bands: int,
+    sample_rate: int,
+    min_f: float = 20.0,
+    max_f: float = 20000.0,
+) -> list[float]:
+    nyquist = sample_rate / 2.0
+    max_f = min(max_f, nyquist - 1.0)
+    if bands <= 0 or max_f <= min_f:
+        return []
+    edges = [
+        10 ** (math.log10(min_f) + i * (math.log10(max_f) - math.log10(min_f)) / bands)
+        for i in range(bands + 1)
+    ]
+    return [math.sqrt(edges[i] * edges[i + 1]) for i in range(bands)]
+
+
+def normalize_band_gains(raw, bands: int) -> list[float]:
+    default = [1.0] * bands
+    if not isinstance(raw, list):
+        return default
+    out = []
+    for v in raw[:bands]:
+        try:
+            fv = float(v)
+        except Exception:
+            fv = 1.0
+        out.append(max(0.0, min(fv, 4.0)))  # 0..4x
+    if len(out) < bands:
+        out.extend([1.0] * (bands - len(out)))
+    return out
+
+
 class State:
-    spectrum = [0.0] * 64
+    bands = int(getattr(capture, "BANDS", 64))
+    sample_rate = int(getattr(capture, "SAMPLE_RATE", 48000))
+
+    spectrum = [0.0] * bands
     source = "server"  # 'server' (системный) или 'browser'
     eq_styles = {
         "colorTop": "#e94560",
@@ -23,6 +60,8 @@ class State:
         "transparent": False,
         "bgAlpha": 1.0,
         "sensitivity": 1.0,
+        "bandGains": [1.0] * bands,
+        "bandCentersHz": build_band_centers_hz(bands, sample_rate),
     }
 
 
@@ -31,12 +70,12 @@ state = State()
 
 @app.get("/")
 async def index():
-    return FileResponse("static/capture.html")
+    return FileResponse("static/capture/capture.html")
 
 
 @app.get("/equalizer")
 async def equalizer_page():
-    return FileResponse("static/equalizer.html")
+    return FileResponse("static/equalizer/equalizer.html")
 
 
 @app.get("/api/devices")
@@ -52,7 +91,11 @@ async def get_equalizer_styles():
 @app.post("/api/equalizer/styles")
 async def set_equalizer_styles(payload: dict):
     if isinstance(payload, dict):
-        state.eq_styles = {**state.eq_styles, **payload}
+        merged = {**state.eq_styles, **payload}
+        merged["bandGains"] = normalize_band_gains(merged.get("bandGains"), state.bands)
+        if not isinstance(merged.get("bandCentersHz"), list) or len(merged["bandCentersHz"]) != state.bands:
+            merged["bandCentersHz"] = build_band_centers_hz(state.bands, state.sample_rate)
+        state.eq_styles = merged
     return {"status": "ok", "settings": state.eq_styles}
 
 
@@ -71,7 +114,7 @@ async def start_capture(payload: dict):
 @app.post("/api/stop")
 async def stop_capture():
     capture.stop()
-    state.spectrum = [0.0] * 64
+    state.spectrum = [0.0] * state.bands
     return {"status": "stopped"}
 
 
