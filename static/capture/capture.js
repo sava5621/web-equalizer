@@ -205,6 +205,20 @@ async function saveSettings() {
     }
 }
 
+function openEqualizer() {
+    window.open('/equalizer', '_blank');
+}
+
+async function copyEqualizerLink() {
+    const url = `${location.origin}/equalizer`;
+    try {
+        await navigator.clipboard.writeText(url);
+        status.textContent = '✅ Ссылка на эквалайзер скопирована';
+    } catch (e) {
+        status.textContent = '❌ Не удалось скопировать ссылку: ' + e.message;
+    }
+}
+
 async function loadSavedSettings() {
     try {
         const res = await fetch('/api/equalizer/styles', { cache: 'no-store' });
