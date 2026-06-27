@@ -9,7 +9,7 @@ const defaultSettings = {
     bgColor: '#0a0a14',
     transparent: false,
     bgAlpha: 1.0,
-    sensitivity: 1.0,
+    sensitivity: 1.0
 };
 
 let settings = { ...defaultSettings };
@@ -40,35 +40,17 @@ async function requestSettingsFromServer() {
     }
 }
 
-function loadSettingsFromLocalStorage() {
-    try {
-        const s = JSON.parse(localStorage.getItem('eqSettings') || '{}');
-        settings = { ...settings, ...s };
-        applyBodyBg();
-    } catch (_) {
-        // ignore parse errors
-    }
+async function refreshSettingsFromServer() {
+    const serverSettings = await requestSettingsFromServer();
+    settings = { ...settings, ...serverSettings };
+    applyBodyBg();
 }
 
 async function loadInitialSettings() {
     const serverSettings = await requestSettingsFromServer();
-
-    let localSettings = {};
-    try {
-        localSettings = JSON.parse(localStorage.getItem('eqSettings') || '{}');
-    } catch (_) {
-        // ignore parse errors
-    }
-
-    settings = { ...defaultSettings, ...serverSettings, ...localSettings };
+    settings = { ...defaultSettings, ...serverSettings };
     applyBodyBg();
 }
-
-window.addEventListener('storage', (e) => {
-    if (e.key === 'eqSettings') loadSettingsFromLocalStorage();
-});
-
-setInterval(loadSettingsFromLocalStorage, 200);
 
 function resize() {
     canvas.width = innerWidth;
@@ -145,6 +127,7 @@ function draw() {
 
 async function init() {
     await loadInitialSettings();
+    setInterval(refreshSettingsFromServer, 500);
     resize();
     document.body.style.visibility = 'visible';
     connect();
@@ -152,7 +135,9 @@ async function init() {
 }
 
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => { init(); });
+    document.addEventListener('DOMContentLoaded', () => {
+        init();
+    });
 } else {
     init();
 }
