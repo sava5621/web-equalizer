@@ -5,6 +5,9 @@
     <title>Эквалайзер</title>
     <style>
         html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+        /* Скрываем содержимое до применения пользовательских настроек,
+           чтобы не было вспышки дефолтных стилей */
+        body { visibility: hidden; }
         canvas { display: block; }
     </style>
 </head>
@@ -51,7 +54,6 @@
             canvas.height = innerHeight;
         }
         addEventListener('resize', resize);
-        resize();
 
         let spectrum = new Array(64).fill(0);
         let smoothed = new Array(64).fill(0);
@@ -115,10 +117,22 @@
             requestAnimationFrame(draw);
         }
 
-        // инициализация
-        loadSettings();
-        connect();
-        draw();
+        // инициализация: сначала загружаем настройки, потом показываем содержимое
+        // и только затем запускаем отрисовку — чтобы не мелькали дефолтные стили
+        function init() {
+            loadSettings();
+            resize();
+            // показать body только после применения пользовательских настроек
+            document.body.style.visibility = 'visible';
+            connect();
+            requestAnimationFrame(draw);
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
     </script>
 </body>
 </html>
