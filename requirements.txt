@@ -1,0 +1,6 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+soundcard==0.4.3
+numpy==1.26.4
+pycaw==20240210
+comtypes==1.4.6

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Эквалайзер</title>
+    <style>
+        html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let settings = {
+            colorTop: '#e94560', colorBottom: '#533483', rainbow: false,
+            bgColor: '#0a0a14', transparent: false, bgAlpha: 1.0,
+            sensitivity: 1.0,
+        };
+
+        function hexToRgb(hex) {
+            const v = parseInt(hex.slice(1), 16);
+            return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+        }
+
+        function applyBodyBg() {
+            if (settings.transparent) {
+                document.documentElement.style.background = 'transparent';
+                document.body.style.background = 'transparent';
+            } else {
+                const [r, g, b] = hexToRgb(settings.bgColor);
+                document.body.style.background = `rgba(${r},${g},${b},${settings.bgAlpha})`;
+            }
+        }
+
+        function loadSettings() {
+            const s = JSON.parse(localStorage.getItem('eqSettings') || '{}');
+            settings = { ...settings, ...s };
+            applyBodyBg();
+        }
+
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'eqSettings') loadSettings();
+        });
+        setInterval(loadSettings, 200);
+
+        function resize() {
+            canvas.width = innerWidth;
+            canvas.height = innerHeight;
+        }
+        addEventListener('resize', resize);
+        resize();
+
+        let spectrum = new Array(64).fill(0);
+        let smoothed = new Array(64).fill(0);
+
+        function connect() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const ws = new WebSocket(`${proto}://${location.host}/ws/equalizer`);
+            ws.onclose = () => setTimeout(connect, 1000);
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (Array.isArray(data) && data.length) spectrum = data;
+            };
+        }
+
+        function draw() {
+            const w = canvas.width, h = canvas.height;
+
+            // фон
+            if (settings.transparent) {
+                ctx.clearRect(0, 0, w, h);
+            } else {
+                const [r, g, b] = hexToRgb(settings.bgColor);
+                if (settings.bgAlpha >= 1) {
+                    // непрозрачный фон + лёгкий шлейф для плавности
+                    ctx.fillStyle = `rgba(${r},${g},${b},0.3)`;
+                    ctx.fillRect(0, 0, w, h);
+                } else {
+                    // полупрозрачный фон
+                    ctx.clearRect(0, 0, w, h);
+                    ctx.fillStyle = `rgba(${r},${g},${b},${settings.bgAlpha})`;
+                    ctx.fillRect(0, 0, w, h);
+                }
+            }
+
+            const n = spectrum.length;
+            if (smoothed.length !== n) smoothed = new Array(n).fill(0);
+            const bw = w / n;
+
+            for (let i = 0; i < n; i++) {
+                // применяем чувствительность и ограничиваем 0..1, чтобы не зашкаливало
+                const val = Math.min(spectrum[i] * settings.sensitivity, 1.0);
+                smoothed[i] += (val - smoothed[i]) * 0.4;
+                const barH = smoothed[i] * h * 0.9;
+
+                let grad;
+                if (settings.rainbow) {
+                    const hue = (i / n) * 280;
+                    grad = ctx.createLinearGradient(0, h - barH, 0, h);
+                    grad.addColorStop(0, `hsl(${hue}, 90%, 65%)`);
+                    grad.addColorStop(1, `hsl(${hue}, 90%, 35%)`);
+                } else {
+                    grad = ctx.createLinearGradient(0, h - barH, 0, h);
+                    grad.addColorStop(0, settings.colorTop);
+                    grad.addColorStop(1, settings.colorBottom);
+                }
+
+                ctx.fillStyle = grad;
+                ctx.fillRect(i * bw + 1, h - barH, bw - 2, barH);
+            }
+
+            requestAnimationFrame(draw);
+        }
+
+        // инициализация
+        loadSettings();
+        connect();
+        draw();
+    </script>
+</body>
+</html>

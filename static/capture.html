@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Захват звука</title>
+    <style>
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            background: #1a1a2e; color: #eee;
+            display: flex; justify-content: center; padding: 30px;
+        }
+        .card {
+            background: #16213e; padding: 30px; border-radius: 12px;
+            width: 540px; box-shadow: 0 10px 30px rgba(0,0,0,.4);
+        }
+        h1 { margin-top: 0; font-size: 22px; }
+        h3 { margin: 20px 0 8px; font-size: 15px; color: #aaa; }
+        select, button {
+            width: 100%; padding: 12px; margin: 6px 0;
+            border-radius: 8px; border: none; font-size: 15px; box-sizing: border-box;
+        }
+        select { background: #0f3460; color: #eee; }
+        button { cursor: pointer; background: #e94560; color: #fff; font-weight: 600; }
+        button:hover { opacity: .9; }
+        button.secondary { background: #0f3460; }
+        .status { margin-top: 15px; padding: 10px; border-radius: 8px;
+                  background: #0f3460; font-size: 14px; }
+        a.link { display: inline-block; margin-top: 15px; color: #e94560; font-weight: 600; }
+        .radio-group { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+        .radio-group label { cursor: pointer; padding: 4px; }
+        .color-row { display: flex; align-items: center;
+                     justify-content: space-between; margin: 8px 0; }
+        input[type="color"] { width: 50px; height: 35px; border: none;
+                              border-radius: 6px; background: none; cursor: pointer; }
+        input[type="range"] { width: 200px; }
+        .checkbox-row { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+        .hidden { display: none; }
+        .hint { font-size: 12px; color: #888; margin: 4px 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🎙 Захват звука</h1>
+
+        <h3>Источник звука</h3>
+        <div class="radio-group">
+            <label>
+                <input type="radio" name="source" value="system" checked
+                       onchange="toggleSource()"> 🔊 Весь компьютер
+            </label>
+            <label>
+                <input type="radio" name="source" value="browser"
+                       onchange="toggleSource()"> 🪟 Окно / вкладка приложения
+            </label>
+        </div>
+
+        <div id="systemBlock">
+            <select id="devices"></select>
+            <p class="hint">Сервер захватит весь системный звук.</p>
+        </div>
+
+        <div id="browserBlock" class="hidden">
+            <p class="hint">
+                Выберите окно/вкладку и <b>включите галочку «Поделиться аудио»</b>.
+                Не закрывайте эту вкладку — она передаёт звук эквалайзеру.
+            </p>
+        </div>
+
+        <button id="startBtn" onclick="start()">▶ Начать захват</button>
+        <button class="secondary" onclick="stop()">⏹ Остановить</button>
+
+        <div class="status" id="status">Готов к работе</div>
+
+        <h3>🎚 Чувствительность</h3>
+        <div class="color-row">
+            <span>Чувствительность звука</span>
+            <input type="range" id="sensitivity" min="10" max="400" value="100">
+        </div>
+        <p class="hint">
+            Меньше — если эквалайзер зашкаливает. Больше — если столбики низкие.
+            <b><span id="sensVal">100</span>%</b>
+        </p>
+
+        <h3>🎨 Настройки эквалайзера</h3>
+        <div class="color-row"><span>Цвет столбиков (верх)</span>
+            <input type="color" id="colorTop" value="#e94560"></div>
+        <div class="color-row"><span>Цвет столбиков (низ)</span>
+            <input type="color" id="colorBottom" value="#533483"></div>
+        <div class="checkbox-row"><input type="checkbox" id="rainbow">
+            <label for="rainbow">🌈 Радужный режим</label></div>
+        <div class="color-row"><span>Цвет фона</span>
+            <input type="color" id="bgColor" value="#0a0a14"></div>
+        <div class="checkbox-row"><input type="checkbox" id="transparent">
+            <label for="transparent">Прозрачный фон</label></div>
+        <div class="color-row"><span>Прозрачность фона</span>
+            <input type="range" id="bgAlpha" min="0" max="100" value="100"></div>
+        <button onclick="saveSettings()">💾 Применить настройки</button>
+
+        <a class="link" href="/equalizer" target="_blank">📊 Открыть эквалайзер →</a>
+    </div>
+
+    <script>
+        const sel = document.getElementById('devices');
+        const status = document.getElementById('status');
+
+        function toggleSource() {
+            const val = document.querySelector('input[name="source"]:checked').value;
+            document.getElementById('systemBlock').classList.toggle('hidden', val !== 'system');
+            document.getElementById('browserBlock').classList.toggle('hidden', val !== 'browser');
+        }
+
+        async function loadDevices() {
+            try {
+                const res = await fetch('/api/devices');
+                const data = await res.json();
+                sel.innerHTML = '';
+                data.devices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.id;
+                    opt.textContent = '🔊 ' + d.name;
+                    sel.appendChild(opt);
+                });
+            } catch (e) {}
+        }
+
+        // ===== браузерный захват =====
+        let captureStream = null;
+        let audioCtx = null;
+        let analyser = null;
+        let freqData = null;
+        let ingestWs = null;
+        let rafId = null;
+
+        const BANDS = 64;
+
+        async function start() {
+            const source = document.querySelector('input[name="source"]:checked').value;
+
+            await fetch('/api/start', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    source_type: source,
+                    device_id: source === 'system' ? sel.value : null
+                })
+            });
+
+            if (source === 'system') {
+                stopBrowserCapture();
+                status.textContent = '✅ Системный захват запущен. Откройте эквалайзер.';
+            } else {
+                await startBrowserCapture();
+            }
+        }
+
+        async function startBrowserCapture() {
+            try {
+                captureStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true,
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                    }
+                });
+
+                const audioTracks = captureStream.getAudioTracks();
+                if (audioTracks.length === 0) {
+                    status.textContent = '⚠ Аудио не захвачено! Включите «Поделиться аудио».';
+                    stopBrowserCapture();
+                    return;
+                }
+
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const src = audioCtx.createMediaStreamSource(captureStream);
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.0;
+                src.connect(analyser);
+                freqData = new Uint8Array(analyser.frequencyBinCount);
+
+                const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+                ingestWs = new WebSocket(`${proto}://${location.host}/ws/ingest`);
+
+                ingestWs.onopen = () => {
+                    status.textContent = '✅ Захват окна активен. Эквалайзер доступен по ссылке.';
+                    sendLoop();
+                };
+
+                audioTracks[0].onended = () => {
+                    status.textContent = '⏹ Захват окна остановлен пользователем.';
+                    stopBrowserCapture();
+                };
+
+            } catch (e) {
+                status.textContent = '❌ Отменено или ошибка: ' + e.message;
+            }
+        }
+
+        function computeSpectrum() {
+            analyser.getByteFrequencyData(freqData);
+            const nyquist = audioCtx.sampleRate / 2;
+            const binCount = freqData.length;
+            const minF = 20, maxF = 20000;
+            const result = new Array(BANDS).fill(0);
+
+            for (let i = 0; i < BANDS; i++) {
+                const f1 = minF * Math.pow(maxF / minF, i / BANDS);
+                const f2 = minF * Math.pow(maxF / minF, (i + 1) / BANDS);
+                const bin1 = Math.floor(f1 / nyquist * binCount);
+                const bin2 = Math.max(bin1 + 1, Math.floor(f2 / nyquist * binCount));
+                let sum = 0, cnt = 0;
+                for (let b = bin1; b < bin2 && b < binCount; b++) {
+                    sum += freqData[b]; cnt++;
+                }
+                result[i] = cnt > 0 ? (sum / cnt) / 255 : 0;
+            }
+            return result;
+        }
+
+        function sendLoop() {
+            if (!ingestWs || ingestWs.readyState !== WebSocket.OPEN) return;
+            const spec = computeSpectrum();
+            ingestWs.send(JSON.stringify(spec));
+            rafId = requestAnimationFrame(sendLoop);
+        }
+
+        function stopBrowserCapture() {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = null;
+            if (ingestWs) { ingestWs.close(); ingestWs = null; }
+            if (audioCtx) { audioCtx.close(); audioCtx = null; }
+            analyser = null;
+            if (captureStream) {
+                captureStream.getTracks().forEach(t => t.stop());
+                captureStream = null;
+            }
+        }
+
+        async function stop() {
+            stopBrowserCapture();
+            try { await fetch('/api/stop', { method: 'POST' }); } catch (e) {}
+            status.textContent = '⏹ Захват остановлен';
+        }
+
+        function saveSettings() {
+            const settings = {
+                colorTop: document.getElementById('colorTop').value,
+                colorBottom: document.getElementById('colorBottom').value,
+                rainbow: document.getElementById('rainbow').checked,
+                bgColor: document.getElementById('bgColor').value,
+                transparent: document.getElementById('transparent').checked,
+                bgAlpha: document.getElementById('bgAlpha').value / 100,
+                sensitivity: document.getElementById('sensitivity').value / 100,
+            };
+            localStorage.setItem('eqSettings', JSON.stringify(settings));
+            status.textContent = '🎨 Настройки сохранены и применены к эквалайзеру';
+        }
+
+        function loadSavedSettings() {
+            const s = JSON.parse(localStorage.getItem('eqSettings') || '{}');
+            if (s.colorTop) document.getElementById('colorTop').value = s.colorTop;
+            if (s.colorBottom) document.getElementById('colorBottom').value = s.colorBottom;
+            if (s.rainbow !== undefined) document.getElementById('rainbow').checked = s.rainbow;
+            if (s.bgColor) document.getElementById('bgColor').value = s.bgColor;
+            if (s.transparent !== undefined) document.getElementById('transparent').checked = s.transparent;
+            if (s.bgAlpha !== undefined) document.getElementById('bgAlpha').value = s.bgAlpha * 100;
+            if (s.sensitivity !== undefined) {
+                document.getElementById('sensitivity').value = s.sensitivity * 100;
+                document.getElementById('sensVal').textContent = Math.round(s.sensitivity * 100);
+            }
+        }
+
+        // Живое обновление чувствительности
+        const sensSlider = document.getElementById('sensitivity');
+        sensSlider.addEventListener('input', () => {
+            document.getElementById('sensVal').textContent = sensSlider.value;
+            const s = JSON.parse(localStorage.getItem('eqSettings') || '{}');
+            s.sensitivity = sensSlider.value / 100;
+            localStorage.setItem('eqSettings', JSON.stringify(s));
+        });
+
+        loadDevices();
+        loadSavedSettings();
+        window.addEventListener('beforeunload', stopBrowserCapture);
+    </script>
+</body>
+</html>
