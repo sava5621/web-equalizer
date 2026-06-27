@@ -15,6 +15,15 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 class State:
     spectrum = [0.0] * 64
     source = "server"  # 'server' (системный) или 'browser'
+    eq_styles = {
+        "colorTop": "#e94560",
+        "colorBottom": "#533483",
+        "rainbow": False,
+        "bgColor": "#0a0a14",
+        "transparent": False,
+        "bgAlpha": 1.0,
+        "sensitivity": 1.0,
+    }
 
 
 state = State()
@@ -33,6 +42,18 @@ async def equalizer_page():
 @app.get("/api/devices")
 async def get_devices():
     return {"devices": capture.list_devices()}
+
+
+@app.get("/api/equalizer/styles")
+async def get_equalizer_styles():
+    return {"settings": state.eq_styles}
+
+
+@app.post("/api/equalizer/styles")
+async def set_equalizer_styles(payload: dict):
+    if isinstance(payload, dict):
+        state.eq_styles = {**state.eq_styles, **payload}
+    return {"status": "ok", "settings": state.eq_styles}
 
 
 @app.post("/api/start")
@@ -90,6 +111,7 @@ async def ws_equalizer(websocket: WebSocket):
 @app.on_event("shutdown")
 def shutdown():
     capture.stop()
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

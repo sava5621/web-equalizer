@@ -5,8 +5,6 @@
     <title>Эквалайзер</title>
     <style>
         html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
-        /* Скрываем содержимое до применения пользовательских настроек,
-           чтобы не было вспышки дефолтных стилей */
         body { visibility: hidden; }
         canvas { display: block; }
     </style>
@@ -17,11 +15,17 @@
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
 
-        let settings = {
-            colorTop: '#e94560', colorBottom: '#533483', rainbow: false,
-            bgColor: '#0a0a14', transparent: false, bgAlpha: 1.0,
+        const defaultSettings = {
+            colorTop: '#e94560',
+            colorBottom: '#533483',
+            rainbow: false,
+            bgColor: '#0a0a14',
+            transparent: false,
+            bgAlpha: 1.0,
             sensitivity: 1.0,
         };
+
+        let settings = { ...defaultSettings };
 
         function hexToRgb(hex) {
             const v = parseInt(hex.slice(1), 16);
@@ -38,21 +42,52 @@
             }
         }
 
-        function loadSettings() {
-            const s = JSON.parse(localStorage.getItem('eqSettings') || '{}');
-            settings = { ...settings, ...s };
+        async function requestSettingsFromServer() {
+            try {
+                const resp = await fetch('/api/equalizer/styles', { cache: 'no-store' });
+                if (!resp.ok) return {};
+                const data = await resp.json();
+                return (data && typeof data === 'object' && data.settings) ? data.settings : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function loadSettingsFromLocalStorage() {
+            try {
+                const s = JSON.parse(localStorage.getItem('eqSettings') || '{}');
+                settings = { ...settings, ...s };
+                applyBodyBg();
+            } catch (_) {
+                // ignore parse errors
+            }
+        }
+
+        async function loadInitialSettings() {
+            const serverSettings = await requestSettingsFromServer();
+
+            let localSettings = {};
+            try {
+                localSettings = JSON.parse(localStorage.getItem('eqSettings') || '{}');
+            } catch (_) {
+                // ignore parse errors
+            }
+
+            settings = { ...defaultSettings, ...serverSettings, ...localSettings };
             applyBodyBg();
         }
 
         window.addEventListener('storage', (e) => {
-            if (e.key === 'eqSettings') loadSettings();
+            if (e.key === 'eqSettings') loadSettingsFromLocalStorage();
         });
-        setInterval(loadSettings, 200);
+
+        setInterval(loadSettingsFromLocalStorage, 200);
 
         function resize() {
             canvas.width = innerWidth;
             canvas.height = innerHeight;
         }
+
         addEventListener('resize', resize);
 
         let spectrum = new Array(64).fill(0);
@@ -61,27 +96,29 @@
         function connect() {
             const proto = location.protocol === 'https:' ? 'wss' : 'ws';
             const ws = new WebSocket(`${proto}://${location.host}/ws/equalizer`);
+
             ws.onclose = () => setTimeout(connect, 1000);
+
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
-                if (Array.isArray(data) && data.length) spectrum = data;
+                if (Array.isArray(data) && data.length) {
+                    spectrum = data;
+                }
             };
         }
 
         function draw() {
-            const w = canvas.width, h = canvas.height;
+            const w = canvas.width;
+            const h = canvas.height;
 
-            // фон
             if (settings.transparent) {
                 ctx.clearRect(0, 0, w, h);
             } else {
                 const [r, g, b] = hexToRgb(settings.bgColor);
                 if (settings.bgAlpha >= 1) {
-                    // непрозрачный фон + лёгкий шлейф для плавности
                     ctx.fillStyle = `rgba(${r},${g},${b},0.3)`;
                     ctx.fillRect(0, 0, w, h);
                 } else {
-                    // полупрозрачный фон
                     ctx.clearRect(0, 0, w, h);
                     ctx.fillStyle = `rgba(${r},${g},${b},${settings.bgAlpha})`;
                     ctx.fillRect(0, 0, w, h);
@@ -89,11 +126,13 @@
             }
 
             const n = spectrum.length;
-            if (smoothed.length !== n) smoothed = new Array(n).fill(0);
+            if (smoothed.length !== n) {
+                smoothed = new Array(n).fill(0);
+            }
+
             const bw = w / n;
 
             for (let i = 0; i < n; i++) {
-                // применяем чувствительность и ограничиваем 0..1, чтобы не зашкаливало
                 const val = Math.min(spectrum[i] * settings.sensitivity, 1.0);
                 smoothed[i] += (val - smoothed[i]) * 0.4;
                 const barH = smoothed[i] * h * 0.9;
@@ -117,19 +156,16 @@
             requestAnimationFrame(draw);
         }
 
-        // инициализация: сначала загружаем настройки, потом показываем содержимое
-        // и только затем запускаем отрисовку — чтобы не мелькали дефолтные стили
-        function init() {
-            loadSettings();
+        async function init() {
+            await loadInitialSettings();   // запрашиваем стили до показа
             resize();
-            // показать body только после применения пользовательских настроек
             document.body.style.visibility = 'visible';
             connect();
             requestAnimationFrame(draw);
         }
 
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', init);
+            document.addEventListener('DOMContentLoaded', () => { init(); });
         } else {
             init();
         }
